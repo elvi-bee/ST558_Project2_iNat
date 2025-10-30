@@ -22,13 +22,20 @@ ui <- fluidPage(
   titlePanel("Top Species by Observations"),
   sidebarLayout(
     sidebarPanel(
+      #radioButtons("overview", "Overview of all Observations:",
+      #             choices = c("WNC (all counties)" = "wnc", "Selected county" = "county"),
+      #             selected = "wnc", inline = TRUE
+      #),
       selectInput("county", "County:", choices = county_choices, selected = "_ALL_"),
+      sliderInput("month_range", "Observation months:",
+                  min = 1, max = 12, value = c(3, 9), step = 1),
       sliderInput("min_obs", "Minimum observations (species must have at least):",
                   min = 1, max = max(df$sum_sp, na.rm = TRUE), value = 10, step = 1),
       numericInput("top_n", "Show top N species:", value = 15, min = 5, max = 50, step = 1),
       actionButton("apply", "Apply")
     ),
     mainPanel(
+      
       plotOutput("bar", height = 450)
     )
   )
@@ -36,32 +43,52 @@ ui <- fluidPage(
 
 server <- function(input, output, session){
   
+  
+  
+  ########################################
   filtered <- eventReactive(input$apply, {
-    d <- df
-    # pick which count column to use
+    # month filter
+    d <- df |>
+      filter(between(observed_month, input$month_range[1], input$month_range[2]))
+    
     if (input$county == "_ALL_") {
-      d <- d %>%
-        filter(sum_sp >= input$min_obs) %>%
-        select(common_name, sum_sp) %>%
-        distinct()
-      d <- d %>%
-        arrange(desc(sum_sp)) %>%
-        slice_head(n = input$top_n)
-      d$label <- d$common_name
-      d$count <- d$sum_sp
+      # recalculate species counts after month filter
+      d <- d |>
+        count(common_name, name = "count") |>
+        filter(count >= input$min_obs) |>
+        arrange(desc(count)) |>
+        slice_head(n = input$top_n) |>
+        mutate(label = common_name)
     } else {
-      d <- d %>%
-        filter(NAME == input$county, sum_spcty >= input$min_obs) %>%
-        select(common_name, sum_spcty) %>%
-        distinct()
-      d <- d %>%
-        arrange(desc(sum_spcty)) %>%
-        slice_head(n = input$top_n)
-      d$label <- d$common_name
-      d$count <- d$sum_spcty
+      # restrict to county, then recalculate species counts
+      d <- d |>
+        filter(NAME == input$county) |>
+        count(common_name, name = "count") |>
+        filter(count >= input$min_obs) |>
+        arrange(desc(count)) |>
+        slice_head(n = input$top_n) |>
+        mutate(label = common_name)
     }
     d
   }, ignoreInit = TRUE)
+  # output:
+  output$overview <- renderPlot({
+    ov <- overview_data()
+    d  <- ov$data
+    validate(need(nrow(d) > 0, "No observations in the selected month range."))
+    
+    ggplot(d, aes(x = month_lab, y = n_obs, group = 1)) +
+      geom_line(linewidth = 0.8) +
+      geom_point(size = 2) +
+      labs(
+        title = ov$title,
+        x = "Month",
+        y = "Number of observations"
+      ) +
+      theme_minimal(base_size = 12)
+  })
+  
+    
   
   output$bar <- renderPlot({
     d <- filtered()
@@ -71,9 +98,9 @@ server <- function(input, output, session){
       coord_flip() +
       labs(
         title = if (input$county == "_ALL_")
-          "Top Species in Western NC"
+          "Top Species in Western NC, 2020 - 2025"
         else
-          paste("Top Species in", input$county,"County"),
+          paste("Top Species in", input$county,"County, 2020 - 2025"),
         x = "Species (common name)", y = "Number of observations"
       ) +
       theme_minimal(base_size = 12)

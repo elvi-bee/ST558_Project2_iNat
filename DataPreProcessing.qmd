@@ -5,8 +5,9 @@ format: html
 editor: visual
 ---
 
-## Quarto
+# Data cleaning steps and Exploration of visuals for Shiny App
 
+## Initial data cleaning
 ```{r}
 library(tidyverse)
 library(dplyr)
@@ -43,6 +44,7 @@ observations_wnc <- selected_observations %>%
 view(observations_wnc)
 ```
 
+Handling NA values:
 ```{r}
 # handle NA data
 sum_na <- function(column){
@@ -53,57 +55,71 @@ sum_na(observations_wnc)
 na_counts <- observations_wnc |>
   summarize(across(everything(), sum_na))
 na_counts
-view(na_counts)
+#view(na_counts)
 
 observations_wnc <- observations_wnc |>
   drop_na(time_observed_at, common_name)
 
-view(observations_wnc)
+#view(observations_wnc)
 
 ```
 
-
+Process temporal variables and aggregated variables
 ```{r}
 # process temporal data
 summary_df <- observations_wnc |>
   mutate(
     observed_on = as_date(observed_on), 
     observed_year = year(observed_on),
-    observed_month= month(observed_on, label = TRUE),    
+    observed_month= month(observed_on),    
     yday = yday(observed_on)
   )
 
-view(summary_df)
+#view(summary_df)
 
 # process numeric variables
 #library(dplyr)
 
 summary_df <- summary_df |>
-  #each row gets a value for how many total observations there are for that common name
+  # each row gets a value for how many total observations there are for that common name
   group_by(common_name) |> 
   mutate(sum_sp = n()) |> # counts up rows in each group
   ungroup() |>
-  #each row gets a value for how many total observations there are for that common name by county
+  # each row gets a value for how many total observations there are for that common name by county
   group_by(common_name, NAME) |> 
   mutate(sum_spcty = n()) |> 
   ungroup() |>
-  
-  #each row gets a value for how many total observations there are for that common name by month
+  # each row gets a value for how many total observations there are for that common name by month
   group_by(common_name, observed_month) |> 
   mutate(sum_spmo = n()) |> 
   ungroup() |>
-  #each row gets a value for how many total observations there are for that common name by county by month
+  # each row gets a value for how many total observations there are for that common name by county by month
   group_by(common_name, NAME, observed_month) |> 
   mutate(sum_spctymo = n()) |> 
+  ungroup() |>
+  # each row gets a value for total observations by county and month
+  group_by(NAME, observed_month) |> 
+  mutate(sum_ctymo = n()) |> 
+  ungroup() |>
+  # each row gets a value for total observations by  month
+  group_by(observed_month) |> 
+  mutate(sum_mo = n()) |> 
+  ungroup() |>
+  # each row gets a value for total observations by county
+  group_by(NAME) |> 
+  mutate(sum_cty = n()) |> 
+  ungroup() |>
+  # each row gets a value for total observations by year
+  group_by(observed_year) |>
+  mutate(sum_yr = n()) |>
   ungroup()
-
 # export to csv for shiny
 write_csv(summary_df, "data/inat_summary.csv")
 saveRDS(summary_df, "data/inat_summary.rds")
 
 ```
 
-
+Checking spatial distribution
 ```{r}
 
 #check for spatial outliers
@@ -112,41 +128,130 @@ ggplot(summary_df, aes(x = longitude, y = latitude)) +
   geom_point(alpha = 0.5) +
   coord_equal()
 ```
-```{r}
 
-# species summary
+
+Observations by species
+```{r}
 library(dplyr)
 
-species_summary_qc <- observations_wnc |>
+# observations by species summary
+species_summary_qc <- summary_df |>
   count(common_name, name = "n_obs") |>
   arrange(desc(n_obs))
 
-# view(species_summary_qc)
+view(species_summary_qc)
 
-# filter and summarize the top species overall
-d <- summary_df %>%
-  select(common_name, sum_sp) %>%
-  distinct() %>%
-  arrange(desc(sum_sp)) %>%
-  slice_head(n = 20) %>%
+# filter and summarize the top species overall (d_topspecies)
+d_topspecies <- summary_df |>
+  select(common_name, sum_sp) |>
+  distinct() |>
+  arrange(desc(sum_sp)) |>
+  slice_head(n = 20) |>
   mutate(label = common_name, count = sum_sp)
 
-view(d)
+view(d_topspecies)
 # ggplot to summarize the top species overall in WNC
-ggplot(d, aes(x = reorder(label, count), y = count)) +
+ggplot(d_topspecies, aes(x = reorder(label, count), y = count)) +
   geom_col(fill = "darkgreen") +
   coord_flip() +
   labs(
-    title = "Top Species in Western North Carolina",
+    title = "Top Species in Western North Carolina, 2020 - 2025",
     x = "Species (common name)",
     y = "Number of observations"
-  ) +
-  theme_minimal(base_size = 12)
+  ) 
          
 
    
 ```
 
+Observations by county
+```{r}
+
+# observations by county
+cty_summary_qc <- observations_wnc |>
+  count(NAME, name = "n_obs") |> # total by county
+  arrange(desc(n_obs))
+
+view(cty_summary_qc)
 
 
+d_bycounty <- summary_df |>
+  select(NAME, sum_cty) |>
+  distinct() |>
+  arrange(desc(sum_cty)) |>
+  slice_head(n = 20) |>
+  mutate(label = NAME, count = sum_cty)
+
+ggplot(d_bycounty, aes(x = reorder(label, count), y = count)) +
+  geom_col(fill = "darkgreen") +
+  coord_flip() +
+  labs(
+    title = "Observations by County, 2020 - 2025",
+    x = "County",
+    y = "Number of observations"
+  ) 
+
+```
+
+Observations by month
+```{r}
+# observations by month
+mo_summary_qc <- summary_df |>
+  count(observed_month, name = "n_obs") |> # total by month
+  arrange(observed_month)
+
+view(mo_summary_qc)
+
+d_bymonth <- summary_df |>
+  select(observed_month, sum_mo) |>
+  distinct() |>
+  arrange(desc(sum_mo)) |>
+  slice_head(n = 20) |>
+  mutate(label = observed_month, count = sum_mo)
+
+d_bymonth <- d_bymonth |>
+  mutate(label = factor(label, levels = 1:12, labels = month.abb, ordered = TRUE))
+
+ggplot(d_bymonth, aes(x = label, y = count)) +
+  geom_col(fill = "darkgreen") +
+  #coord_flip() +
+  labs(
+    title = "Observations by Month, 2020 - 2025",
+    x = "Month",
+    y = "Number of observations"
+  ) 
+```
+
+
+Observations by year
+```{r}
+# observations by year
+yr_summary_qc <- summary_df |>
+  count(observed_year, name = "n_obs") |> # total by month
+  arrange(observed_year)
+
+view(yr_summary_qc)
+
+d_byyear <- summary_df |>
+  select(observed_year, sum_yr) |>
+  distinct() |>
+  arrange(desc(sum_yr)) |>
+  slice_head(n = 20) |>
+  mutate(label = observed_year, count = sum_yr)
+
+#d_bymonth <- d_bymonth |>
+#  mutate(label = factor(label, levels = 1:12, labels = month.abb, ordered = TRUE))
+
+ggplot(d_byyear, aes(x = label, y = count)) +
+  geom_col(fill = "darkgreen") +
+  #coord_flip() +
+  labs(
+    title = "Observations by Year, 2020 - 2025",
+    x = "Year",
+    y = "Number of observations"
+  ) 
+
+yeartable <- table(summary_df$sum_yr)
+print(yeartable)
+```
 
