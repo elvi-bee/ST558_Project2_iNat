@@ -10,6 +10,7 @@ library(bslib)
 library(ggplot2)
 library(dplyr)
 library(readr)
+library(tidyr)
 
 # load data
 df <- read_csv("data/inat_summary.csv", show_col_types = FALSE)
@@ -22,30 +23,28 @@ ui <- fluidPage(
   titlePanel("Top Species by Observations"),
   sidebarLayout(
     sidebarPanel(
-      #radioButtons("overview", "Overview of all Observations:",
-      #             choices = c("WNC (all counties)" = "wnc", "Selected county" = "county"),
-      #             selected = "wnc", inline = TRUE
-      #),
+      
       selectInput("county", "County:", choices = county_choices, selected = "_ALL_"),
       sliderInput("month_range", "Observation months:",
-                  min = 1, max = 12, value = c(3, 9), step = 1),
+                  min = 1, max = 12, value = c(1, 12), step = 1),
       sliderInput("min_obs", "Minimum observations (species must have at least):",
                   min = 1, max = max(df$sum_sp, na.rm = TRUE), value = 10, step = 1),
       numericInput("top_n", "Show top N species:", value = 15, min = 5, max = 50, step = 1),
       actionButton("apply", "Apply")
     ),
     mainPanel(
+      DT::dataTableOutput("crosstab1yr"), # output for observation by year table
+      tags$hr(),
+      plotOutput("bar", height = 450) # output for top species bar chart
       
-      plotOutput("bar", height = 450)
+      
     )
   )
 )
 
 server <- function(input, output, session){
   
-  
-  
-  ########################################
+ 
   filtered <- eventReactive(input$apply, {
     # month filter
     d <- df |>
@@ -71,25 +70,9 @@ server <- function(input, output, session){
     }
     d
   }, ignoreInit = TRUE)
-  # output:
-  output$overview <- renderPlot({
-    ov <- overview_data()
-    d  <- ov$data
-    validate(need(nrow(d) > 0, "No observations in the selected month range."))
-    
-    ggplot(d, aes(x = month_lab, y = n_obs, group = 1)) +
-      geom_line(linewidth = 0.8) +
-      geom_point(size = 2) +
-      labs(
-        title = ov$title,
-        x = "Month",
-        y = "Number of observations"
-      ) +
-      theme_minimal(base_size = 12)
-  })
   
-    
-  
+  ###########################################
+  # output top species bar chart
   output$bar <- renderPlot({
     d <- filtered()
     validate(need(nrow(d) > 0, "No species meet the current filters."))
@@ -105,6 +88,44 @@ server <- function(input, output, session){
       ) +
       theme_minimal(base_size = 12)
   })
+  
+  ###########################################
+  # REACTIVE: 1-way contingency table for observations by year
+  crosstab1yr_data <- eventReactive(input$apply, {
+    d <- df |>
+      filter(between(observed_month, input$month_range[1], input$month_range[2]))
+    
+    if (input$county != "_ALL_") {
+      d <- d |> filter(NAME == input$county)
+    }
+    
+    d |>
+      count(observed_year, name = "n_obs") |>
+      arrange(observed_year) |>
+      mutate(Year = "Total Observations") |>
+      pivot_wider(
+        names_from = observed_year, 
+        values_from = n_obs, 
+        values_fill = 0)
+  }, ignoreInit = TRUE)
+  
+  # RENDER: crosstab1yr
+  output$crosstab1yr <- DT::renderDataTable({
+    ct <- crosstab1yr_data()
+    validate(need(nrow(ct) > 0, "No observations for this selection."))
+    DT::datatable(
+      ct,
+      rownames = FALSE,
+      options = list(
+        ordering = FALSE,
+        searching = FALSE, # Remove column filter boxes
+        paging = FALSE,    # Turn off pagination entirely
+        info = FALSE 
+      ),
+    )
+  })
+  
+  ########################################
 }
 
 shinyApp(ui, server)
