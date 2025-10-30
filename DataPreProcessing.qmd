@@ -1,0 +1,152 @@
+---
+title: "ST 558 Project 2: iNat Shiny App - Birding in WNC"
+author: "Elvira McIntyre"
+format: html
+editor: visual
+---
+
+## Quarto
+
+```{r}
+library(tidyverse)
+library(dplyr)
+
+raw_data <- read_csv("data/inat_with_nc_county.csv",col_names = TRUE)
+view(raw_data)
+
+# drop columns that wont be used
+selected_observations <- raw_data |>
+  select(-uuid, -observed_on_string, -user_login, 
+         -user_name, -created_at, -updated_at, 
+         -license, -url, -image_url, -sound_url, 
+         -tag_list, -description, -oauth_application_id,
+         -place_guess, -positional_accuracy, 
+         -private_place_guess,-private_latitude, 
+         -private_longitude,-public_positional_accuracy,
+         -geoprivacy,-taxon_geoprivacy, -coordinates_obscured,
+         -positioning_method, -positioning_device,
+         -place_town_name, -place_county_name, -species_guess, 
+         -GEOID)
+#view(selected_observations)
+
+# vector of county names in wnc
+wnc_counties <- c(
+  "Cherokee","Graham","Clay","Swain","Macon","Jackson",
+  "Haywood","Transylvania","Madison","Buncombe",
+  "Henderson","Polk","Rutherford","McDowell","Yancey",
+  "Mitchell","Avery","Watauga","Burke","Ashe","Alleghany",
+  "Caldwell","Wilkes"
+)
+# keep only data from counties in WNC
+observations_wnc <- selected_observations %>%
+  filter(NAME %in% wnc_counties)
+view(observations_wnc)
+```
+
+```{r}
+# handle NA data
+sum_na <- function(column){
+  sum(is.na(column))
+}
+sum_na(observations_wnc)
+
+na_counts <- observations_wnc |>
+  summarize(across(everything(), sum_na))
+na_counts
+view(na_counts)
+
+observations_wnc <- observations_wnc |>
+  drop_na(time_observed_at, common_name)
+
+view(observations_wnc)
+
+```
+
+
+```{r}
+# process temporal data
+summary_df <- observations_wnc |>
+  mutate(
+    observed_on = as_date(observed_on), 
+    observed_year = year(observed_on),
+    observed_month= month(observed_on, label = TRUE),    
+    yday = yday(observed_on)
+  )
+
+view(summary_df)
+
+# process numeric variables
+#library(dplyr)
+
+summary_df <- summary_df |>
+  #each row gets a value for how many total observations there are for that common name
+  group_by(common_name) |> 
+  mutate(sum_sp = n()) |> # counts up rows in each group
+  ungroup() |>
+  #each row gets a value for how many total observations there are for that common name by county
+  group_by(common_name, NAME) |> 
+  mutate(sum_spcty = n()) |> 
+  ungroup() |>
+  
+  #each row gets a value for how many total observations there are for that common name by month
+  group_by(common_name, observed_month) |> 
+  mutate(sum_spmo = n()) |> 
+  ungroup() |>
+  #each row gets a value for how many total observations there are for that common name by county by month
+  group_by(common_name, NAME, observed_month) |> 
+  mutate(sum_spctymo = n()) |> 
+  ungroup()
+
+# export to csv for shiny
+write_csv(summary_df, "data/inat_summary.csv")
+saveRDS(summary_df, "data/inat_summary.rds")
+
+```
+
+
+```{r}
+
+#check for spatial outliers
+library(ggplot2)
+ggplot(summary_df, aes(x = longitude, y = latitude)) +
+  geom_point(alpha = 0.5) +
+  coord_equal()
+```
+```{r}
+
+# species summary
+library(dplyr)
+
+species_summary_qc <- observations_wnc |>
+  count(common_name, name = "n_obs") |>
+  arrange(desc(n_obs))
+
+# view(species_summary_qc)
+
+# filter and summarize the top species overall
+d <- summary_df %>%
+  select(common_name, sum_sp) %>%
+  distinct() %>%
+  arrange(desc(sum_sp)) %>%
+  slice_head(n = 20) %>%
+  mutate(label = common_name, count = sum_sp)
+
+view(d)
+# ggplot to summarize the top species overall in WNC
+ggplot(d, aes(x = reorder(label, count), y = count)) +
+  geom_col(fill = "darkgreen") +
+  coord_flip() +
+  labs(
+    title = "Top Species in Western North Carolina",
+    x = "Species (common name)",
+    y = "Number of observations"
+  ) +
+  theme_minimal(base_size = 12)
+         
+
+   
+```
+
+
+
+
