@@ -85,18 +85,20 @@ ui <- fluidPage(
           card_body(
             fluidRow(
               column(12,
+                     h5("Observations by Year for Selected Species"),
+                     DT::dataTableOutput("species_year_table"),
+                     tags$hr()
+                     ),
+              column(12,
                      h5("Map of Birds"),
                      # add map output here
-                       choices = species_choices,
-                       options = list(placeholder = "Start typing a bird's name."),
-                       multiple = FALSE,
                      p("Map respects Month and County filters above."),
                      leafletOutput("species_map", height =420)
                      )
             ),
               column(12,
                      h5("When to see this bird"),
-                     #plotOutput()
+                     #plotOutput() to add later
               )
                      
           ) # card body 
@@ -197,8 +199,31 @@ server <- function(input, output, session){
   
   ###########################################
   # REACTIVE subset for the chosen species, keeping month and county filters
+  
+  # REACTIVE: 2-way contingency table for the selected species (County × Year)
+  species_year_county_data <- reactive({
+    req(input$species)              # must pick a species first
+    
+    d <- species_data()             # already filtered by species + month + (maybe) county
+    req(nrow(d) > 0)
+    
+    tab <- d %>%
+      count(NAME, observed_year, name = "n_obs") %>%     # County × Year counts
+      tidyr::pivot_wider(
+        names_from  = observed_year,                     # Years become columns
+        values_from = n_obs,
+        values_fill = 0
+      ) %>%
+      dplyr::rename(County = NAME) %>%
+      dplyr::mutate(Total = rowSums(dplyr::across(where(is.numeric)), na.rm = TRUE)) %>%
+      dplyr::arrange(dplyr::desc(Total))                 # optional: sort by total desc
+    
+    tab
+  })
+  
+  # REACTIVE
   species_data <- reactive({
-    req(input$species)  # wait until a species is selected
+    req(input$species) # ensure a species is chosen (non-empty)
     d <- df |>
       dplyr::filter(
         common_name == input$species,
@@ -207,11 +232,30 @@ server <- function(input, output, session){
     if (input$county != "_ALL_") {
       d <- d |> dplyr::filter(NAME == input$county)
     }
-    # keep only valid coordinates
     d |> dplyr::filter(!is.na(latitude), !is.na(longitude))
   })
   
+  # RENDER
+  output$species_year_table <- DT::renderDataTable({
+    req(input$species)  # don’t render until a species is chosen
+    ct <- species_year_county_data()
+    DT::datatable(
+      ct,
+      rownames = FALSE,
+      options = list(
+        dom = 't',        # no search/paging/info
+        ordering = TRUE,
+        searching = FALSE,
+        paging = FALSE,
+        info = FALSE
+      )
+    )
+  })
+  
+  
+  # RENDER
   output$species_map <- renderLeaflet({
+    req(input$species)
     d <- species_data()
     validate(need(nrow(d) > 0, "No observations for this species with current filters."))
     
@@ -231,6 +275,9 @@ server <- function(input, output, session){
       lat2 = max(d$latitude,  na.rm = TRUE)
     )
   })
+  
+
+  
   
   
   ########################################

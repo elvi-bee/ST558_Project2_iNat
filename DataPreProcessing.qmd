@@ -13,7 +13,7 @@ library(tidyverse)
 library(dplyr)
 
 raw_data <- read_csv("data/inat_with_nc_county.csv",col_names = TRUE)
-view(raw_data)
+#view(raw_data)
 
 # drop columns that wont be used
 selected_observations <- raw_data |>
@@ -41,7 +41,7 @@ wnc_counties <- c(
 # keep only data from counties in WNC
 observations_wnc <- selected_observations %>%
   filter(NAME %in% wnc_counties)
-view(observations_wnc)
+#view(observations_wnc)
 ```
 
 Handling NA values:
@@ -200,7 +200,7 @@ mo_summary_qc <- summary_df |>
   count(observed_month, name = "n_obs") |> # total by month
   arrange(observed_month)
 
-view(mo_summary_qc)
+#view(mo_summary_qc)
 
 d_bymonth <- summary_df |>
   select(observed_month, sum_mo) |>
@@ -230,7 +230,7 @@ yr_summary_qc <- summary_df |>
   count(observed_year, name = "n_obs") |> # total by month
   arrange(observed_year)
 
-view(yr_summary_qc)
+#view(yr_summary_qc)
 
 d_byyear <- summary_df |>
   select(observed_year, sum_yr) |>
@@ -254,4 +254,13 @@ ggplot(d_byyear, aes(x = label, y = count)) +
 yeartable <- table(summary_df$sum_yr)
 print(yeartable)
 ```
-
+```{r}
+df_obsyr <- summary_df |>
+  group_by(observed_year) |>
+  summarise(
+    total_obs = n(),
+    mean_per_species = mean(sum_sp, na.rm = TRUE),
+    sd_per_species = sd(sum_sp, na.rm = TRUE)
+  )
+view(df_obsyr)
+```
