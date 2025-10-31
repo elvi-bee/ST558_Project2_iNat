@@ -11,6 +11,8 @@ library(ggplot2)
 library(dplyr)
 library(readr)
 library(tidyr)
+library(leaflet)
+library(leaflet.extras)
 
 # load data
 df <- read_csv("data/inat_summary.csv", show_col_types = FALSE)
@@ -18,33 +20,98 @@ df <- read_csv("data/inat_summary.csv", show_col_types = FALSE)
 # county choices and All
 county_levels <- sort(unique(df$NAME))
 county_choices <- c("All WNC" = "_ALL_", county_levels)
+# species choices
+species_choices <- sort(unique(df$common_name))
+
 
 ui <- fluidPage(
-  titlePanel("Top Species by Observations"),
+  titlePanel("iNaturalist Observations in Western North Carolina"),
   sidebarLayout(
     sidebarPanel(
+      card(
+        card_header(h4("Regional Filters")),
+        card_body(
       
-      selectInput("county", "County:", choices = county_choices, selected = "_ALL_"),
+      selectInput("county", "County:", 
+                  choices = county_choices, 
+                  selected = "_ALL_"),
       sliderInput("month_range", "Observation months:",
                   min = 1, max = 12, value = c(1, 12), step = 1),
       sliderInput("min_obs", "Minimum observations (species must have at least):",
-                  min = 1, max = max(df$sum_sp, na.rm = TRUE), value = 10, step = 1),
+                  min = 1, 
+                  max = max(df$sum_sp, na.rm = TRUE), 
+                  value = 10, 
+                  step = 1),
       numericInput("top_n", "Show top N species:", value = 15, min = 5, max = 50, step = 1),
       actionButton("apply", "Apply")
-    ),
+        ) # card body
+    ), # card
+    
+    card(
+      card_header(h4("Bird Explorer")), # card title
+      card_body(
+        p("Pick a species to map observations (respects Month & County)."),
+        selectizeInput(
+          "species", "Species:",
+          choices = c("", sort(unique(df$common_name))),  # alphabetized + blank default
+          options = list(placeholder = "Start typing a bird name..."),
+          multiple = FALSE
+        ),
+        #actionButton("explore_species", "Explore species")
+      ) # card body
+     ) # card
+    ), # sidebar panel
     mainPanel(
-      DT::dataTableOutput("crosstab1yr"), # output for observation by year table
-      tags$hr(),
-      plotOutput("bar", height = 450) # output for top species bar chart
+      conditionalPanel( # conditional panel to control display of text in card
+        condition = "input.apply > 0",
+      card(
+        card_header("Western NC Overview"),
+          card_body(
+            fluidRow(
+              column(12,
+                     h5("Observations by Year"),
+                     DT::dataTableOutput("crosstab1yr")
+              ),
+              column(12,
+                     h5("Top Species by Observations"),
+                     plotOutput("bar", height = 450)
+              )
+             )
+          )
+       )
+      ), # conditional panel
+      card(
+        card_header( "Bird Explorer"),
+          card_body(
+            fluidRow(
+              column(12,
+                     h5("Map of Birds"),
+                     # add map output here
+                       choices = species_choices,
+                       options = list(placeholder = "Start typing a bird's name."),
+                       multiple = FALSE,
+                     p("Map respects Month and County filters above."),
+                     leafletOutput("species_map", height =420)
+                     )
+            ),
+              column(12,
+                     h5("When to see this bird"),
+                     #plotOutput()
+              )
+                     
+          ) # card body 
+      ) # card
+      
+    #) # main panel
       
       
-    )
-  )
-)
-
+    ) # main panel
+  ) # side bar layout
+ ) #fluid page
+###########################################
 server <- function(input, output, session){
   
- 
+  # change to reactive later so something loads on start up?
   filtered <- eventReactive(input$apply, {
     # month filter
     d <- df |>
@@ -72,8 +139,9 @@ server <- function(input, output, session){
   }, ignoreInit = TRUE)
   
   ###########################################
-  # output top species bar chart
+  # RENDER top species bar chart
   output$bar <- renderPlot({
+    #req(input$apply > 0) # render card
     d <- filtered()
     validate(need(nrow(d) > 0, "No species meet the current filters."))
     ggplot(d, aes(x = reorder(label, count), y = count)) +
@@ -91,6 +159,7 @@ server <- function(input, output, session){
   
   ###########################################
   # REACTIVE: 1-way contingency table for observations by year
+  # change to reactive later so something loads on start up?
   crosstab1yr_data <- eventReactive(input$apply, {
     d <- df |>
       filter(between(observed_month, input$month_range[1], input$month_range[2]))
@@ -111,6 +180,7 @@ server <- function(input, output, session){
   
   # RENDER: crosstab1yr
   output$crosstab1yr <- DT::renderDataTable({
+    #req(input$apply > 0) # render card
     ct <- crosstab1yr_data()
     validate(need(nrow(ct) > 0, "No observations for this selection."))
     DT::datatable(
@@ -123,9 +193,49 @@ server <- function(input, output, session){
         info = FALSE 
       ),
     )
+  }) # crosstab1yr
+  
+  ###########################################
+  # REACTIVE subset for the chosen species, keeping month and county filters
+  species_data <- reactive({
+    req(input$species)  # wait until a species is selected
+    d <- df |>
+      dplyr::filter(
+        common_name == input$species,
+        dplyr::between(observed_month, input$month_range[1], input$month_range[2])
+      )
+    if (input$county != "_ALL_") {
+      d <- d |> dplyr::filter(NAME == input$county)
+    }
+    # keep only valid coordinates
+    d |> dplyr::filter(!is.na(latitude), !is.na(longitude))
   })
+  
+  output$species_map <- renderLeaflet({
+    d <- species_data()
+    validate(need(nrow(d) > 0, "No observations for this species with current filters."))
+    
+    # base map
+    m <- leaflet(d) |>
+      addProviderTiles(providers$CartoDB.Positron) |>
+      addHeatmap(
+        lng = ~longitude, lat = ~latitude,
+        blur = 20, radius = 15, max = 1, minOpacity = 0.2
+      )
+    
+    # fit to data extent
+    m |> fitBounds(
+      lng1 = min(d$longitude, na.rm = TRUE),
+      lat1 = min(d$latitude,  na.rm = TRUE),
+      lng2 = max(d$longitude, na.rm = TRUE),
+      lat2 = max(d$latitude,  na.rm = TRUE)
+    )
+  })
+  
   
   ########################################
 }
 
+
+###########################################
 shinyApp(ui, server)
