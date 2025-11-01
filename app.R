@@ -13,6 +13,7 @@ library(readr)
 library(tidyr)
 library(leaflet)
 library(leaflet.extras)
+library(plotly)
 
 # load data
 df <- read_csv("data/inat_summary.csv", show_col_types = FALSE)
@@ -59,6 +60,7 @@ ui <- fluidPage(
       DT::dataTableOutput("crosstab1yr"),
       DT::dataTableOutput("year_species_stats"),
       plotOutput("year_species_box", height = 300),
+      plotlyOutput("county_scatter"), #NEW
       plotOutput("bar", height = 450),
       DT::dataTableOutput("species_year_table"),
       leafletOutput("species_map", height =420)
@@ -147,9 +149,9 @@ server <- function(input, output, session){
         searching = FALSE, # Remove column filter boxes
         paging = FALSE,    # Turn off pagination entirely
         info = FALSE 
-      ),
+      )
     )
-  }) # crosstab1yr
+  })
   
   ###########################################
   # REACTIVE: ---SUMMARY STATS--- by Year Per-Species Observation 2-way contingency table
@@ -240,33 +242,82 @@ server <- function(input, output, session){
       theme_minimal(base_size = 12)
   })
   
-  
   ###########################################
-  # REACTIVE subset for the chosen species, keeping month and county filters
+  # REACTIVE: --- SCATTER PLOT ---
+  # SCATTER PLOT — updates immediately when month_range changes
   
-  # REACTIVE: 2-way contingency table for the selected species (County × Year)
-  species_year_county_data <- reactive({
-    #req(input$species)              # must pick a species first
+  scatter_base <- reactive({
+    df |>
+      dplyr::filter(dplyr::between(observed_month, input$month_range[1], input$month_range[2])) |>
+      dplyr::group_by(NAME) |>
+      dplyr::summarise(
+        observations   = dplyr::n(),
+        unique_species = dplyr::n_distinct(common_name),
+        .groups = "drop"
+      )
+  })
+  
+  output$county_scatter <- renderPlotly({
+    d <- scatter_base()
+    validate(need(nrow(d) > 0, "No counties meet the current month selection."))
     
-    d <- species_data()             # already filtered by species + month + (maybe) county
+    d$highlight <- if (is.null(input$county) || input$county == "_ALL_") FALSE else d$NAME == input$county
+    
+    p <- ggplot(d, aes(
+      x = observations,
+      y = unique_species,
+      text = paste0(
+        "<b>", NAME, "</b><br>",
+        "Observations: ", observations, "<br>",
+        "Unique species: ", unique_species
+      )
+    )) +
+      geom_point(aes(alpha = !highlight), size = 3) +
+      geom_point(data = subset(d, highlight), color = "blue", size = 4, stroke = 1.2) +
+      labs(
+        title = "County Species Richness vs Observation Effort",
+        subtitle = paste0("Months: ", input$month_range[1], "–", input$month_range[2]),
+        x = "Total Observations",
+        y = "Number of Unique Species"
+      ) +
+      coord_flip() +
+      theme_minimal(base_size = 12) +
+      guides(alpha = "none")
+    
+    ggplotly(p, tooltip = "text") |>
+      layout(
+        hoverlabel = list(bgcolor = "white"),
+        margin = list(l = 70, r = 30, t = 60, b = 60)
+      )
+  })
+
+  ###########################################
+  # REACTIVE --- 2-WAY CONTINGENCY TABLE --- 
+  #selected species (County × Year) keeping month and county filters
+  
+  species_year_county_data <- reactive({
+    #req(input$species) # must pick a species first
+    
+    d <- species_data()  # already filtered by species + month + (maybe) county
     req(nrow(d) > 0)
     
-    tab <- d |>
-      count(NAME, observed_year, name = "n_obs") |>     # County × Year counts
+    d |>
+      count(NAME, observed_year, name = "n_obs") |> # County × Year counts
+      dplyr::mutate(observed_year = as.integer(observed_year)) |>
       tidyr::pivot_wider(
-        names_from  = observed_year,                     # Years become columns
+        names_from  = observed_year, # Years become columns
         values_from = n_obs,
         values_fill = 0
-      ) %>%
+      ) |>
       dplyr::rename(County = NAME) |>
+      dplyr::select(County, sort(tidyselect::peek_vars())) |>  # reorder columns numerically
       dplyr::mutate(Total = rowSums(dplyr::across(where(is.numeric)), na.rm = TRUE)) |>
       dplyr::arrange(dplyr::desc(Total))                 # optional: sort by total desc
-    
-    tab
   })
   
   # REACTIVE
-  species_data <- reactive({
+  species_data <- eventReactive({input$species; input$apply}, {
+    req(nzchar(input$species)) # run after a species is chosen
     #req(input$species) # ensure a species is chosen / not empty
     d <- df |>
       dplyr::filter(
@@ -277,17 +328,17 @@ server <- function(input, output, session){
       d <- d |> dplyr::filter(NAME == input$county)
     }
     d |> dplyr::filter(!is.na(latitude), !is.na(longitude))
-  })
+  }, ignoreInit = TRUE)
   
   # RENDER
   output$species_year_table <- DT::renderDataTable({
-    #req(input$species)  # don’t render until a species is chosen
+    req(nzchar(input$species)) 
     ct <- species_year_county_data()
     DT::datatable(
       ct,
       rownames = FALSE,
       options = list(
-        dom = 't',        # no search/paging/info
+        dom = 't',    
         ordering = TRUE,
         searching = FALSE,
         paging = FALSE,
@@ -296,12 +347,13 @@ server <- function(input, output, session){
     )
   })
   
-  
+  ###########################################
+  #--- MAP ---
   # RENDER
   output$species_map <- renderLeaflet({
-    #req(input$species)
+    req(nzchar(input$species)) 
     d <- species_data()
-    validate(need(nrow(d) > 0, "No observations for this species with current filters."))
+    validate(need(nrow(d) > 0, "Select a bird species to see distribution map."))
     
     # base map
     m <- leaflet(d) |>

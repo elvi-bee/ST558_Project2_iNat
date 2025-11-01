@@ -264,3 +264,25 @@ df_obsyr <- summary_df |>
   )
 view(df_obsyr)
 ```
+
+
+
+```{r}
+scatter_df <- summary_df |>
+  group_by(NAME) |>
+  summarise(
+    observations   = n(),
+    unique_species = n_distinct(common_name),
+    .groups = "drop"
+  )
+
+ggplot(scatter_df, aes(x = observations, y = unique_species, label = NAME)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(vjust = -0.6, size = 3) +
+  labs(
+    title = "County Species Richness vs Observation Effort",
+    x = "Total Observations",
+    y = "Number of Unique Species") +
+    coord_flip() +
+  theme_minimal(base_size = 12)
+```
