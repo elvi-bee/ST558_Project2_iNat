@@ -11,6 +11,7 @@ editor: visual
 ```{r}
 library(tidyverse)
 library(dplyr)
+library(lubridate)
 
 raw_data <- read_csv("data/inat_with_nc_county.csv",col_names = TRUE)
 #view(raw_data)
@@ -64,10 +65,48 @@ observations_wnc <- observations_wnc |>
 
 ```
 
-Process temporal variables and aggregated variables
 ```{r}
-# process temporal data
-summary_df <- observations_wnc |>
+
+
+summary_df <- observations_wnc
+
+
+# parse timestamps
+dt_utc <- suppressWarnings(ymd_hms(raw$time_observed_at, quiet = TRUE, tz = "UTC"))
+dt_local <- with_tz(dt_utc, tzone = "America/New_York")
+
+#  build  fields
+summary_df <- summary_df |>
+  mutate(
+    # If dt_local is NA (missing time), still keep observed_on for month/year
+    observed_hour  = hour(dt_local),
+    observed_month = coalesce(month(dt_local), month(ymd(observed_on, quiet = TRUE))),
+    observed_year  = coalesce(year(dt_local),  year(ymd(observed_on, quiet = TRUE)))
+  ) |>
+  mutate(
+    observed_hour  = ifelse(!is.na(observed_hour)  & observed_hour  >= 0 & observed_hour  <= 23, observed_hour,  NA),
+    observed_month = ifelse(!is.na(observed_month) & observed_month >= 1 & observed_month <= 12, observed_month, NA),
+    observed_year  = as.integer(observed_year)
+  )
+
+# 4) Time-of-day bins (fixed clock, local time; ordered for nice legends)
+day_levels <- c("Night","Dawn","Morning","Afternoon","Dusk")
+summary_df <- summary_df |>
+  mutate(
+    day_period = case_when(
+      !is.na(observed_hour) & (observed_hour >= 21 | observed_hour < 5)  ~ "Night",
+      !is.na(observed_hour) &  observed_hour >= 5  & observed_hour < 7   ~ "Dawn",
+      !is.na(observed_hour) &  observed_hour >= 7  & observed_hour < 12  ~ "Morning",
+      !is.na(observed_hour) &  observed_hour >= 12 & observed_hour < 17  ~ "Afternoon",
+      !is.na(observed_hour) &  observed_hour >= 17 & observed_hour < 21  ~ "Dusk",
+      TRUE ~ NA_character_
+    ),
+    day_period = factor(day_period, levels = day_levels, ordered = TRUE)
+  )
+
+
+# process other temporal variables
+summary_df <- summary_df |>
   mutate(
     observed_on = as_date(observed_on), 
     observed_year = year(observed_on),
@@ -75,11 +114,7 @@ summary_df <- observations_wnc |>
     yday = yday(observed_on)
   )
 
-#view(summary_df)
-
-# process numeric variables
-#library(dplyr)
-
+# cleaning for practice visuals
 summary_df <- summary_df |>
   # each row gets a value for how many total observations there are for that common name
   group_by(common_name) |> 
@@ -113,6 +148,41 @@ summary_df <- summary_df |>
   group_by(observed_year) |>
   mutate(sum_yr = n()) |>
   ungroup()
+
+
+
+
+# general prep
+summary_df <- summary_df |>
+  mutate(
+    NAME            = as.character(NAME),
+    common_name     = as.character(common_name),
+    observed_hour   = as.integer(observed_hour),
+    observed_month  = as.integer(observed_month)
+  )
+
+# save for Shiny
+
+write_csv(summary_df, "data/inat_summary.csv")
+saveRDS(summary_df, "data/inat_summary.rds")
+
+
+```
+
+
+
+
+Process temporal variables and aggregated variables
+```{r}
+
+
+
+#view(summary_df)
+
+# process numeric variables
+#library(dplyr)
+
+
 # export to csv for shiny
 write_csv(summary_df, "data/inat_summary.csv")
 saveRDS(summary_df, "data/inat_summary.rds")

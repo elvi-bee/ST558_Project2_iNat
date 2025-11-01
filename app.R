@@ -14,6 +14,7 @@ library(tidyr)
 library(leaflet)
 library(leaflet.extras)
 library(plotly)
+library(lubridate)
 
 # load data
 df <- read_csv("data/inat_summary.csv", show_col_types = FALSE)
@@ -60,9 +61,10 @@ ui <- fluidPage(
       DT::dataTableOutput("crosstab1yr"),
       DT::dataTableOutput("year_species_stats"),
       plotOutput("year_species_box", height = 300),
-      plotlyOutput("county_scatter"), #NEW
+      plotlyOutput("county_scatter"),
       plotOutput("bar", height = 450),
       plotOutput("phenology", height = 320),
+      plotOutput("tod_facets", height = 420),
       DT::dataTableOutput("species_year_table"),
       leafletOutput("species_map", height =420)
 
@@ -342,8 +344,91 @@ server <- function(input, output, session){
         axis.text.y = element_blank()
       )
   })
+  
   ###########################################
-  # REACTIVE --- 2-WAY CONTINGENCY TABLE --- 
+  #--- TIME FACETS ---
+  # faceted time-of-day observations by month - ignores month_range
+  tod_month_period_df <- reactive({
+    d <- df
+    if (input$county != "_ALL_") d <- d |> dplyr::filter(NAME == input$county)
+    if (nzchar(input$species))   d <- d |> dplyr::filter(common_name == input$species)
+    
+    d <- d |>
+      dplyr::filter(!is.na(observed_month), !is.na(day_period)) |>
+      dplyr::mutate(
+        month_fac  = factor(month.abb[observed_month], levels = month.abb, ordered = TRUE),
+        day_period = factor(as.character(day_period),
+                            levels = c("Night","Dawn","Morning","Afternoon","Dusk"),
+                            ordered = TRUE)
+      )
+    
+    # aggregate to counts per (month × day_period), fill zeros, calculate % per month
+    agg <- d |>
+      dplyr::count(month_fac, day_period, name = "n") |>
+      tidyr::complete(
+        month_fac  = factor(month.abb, levels = month.abb, ordered = TRUE),
+        day_period = factor(c("Night","Dawn","Morning","Afternoon","Dusk"),
+                            levels = c("Night","Dawn","Morning","Afternoon","Dusk"),
+                            ordered = TRUE),
+        fill = list(n = 0L)
+      ) |>
+      dplyr::group_by(month_fac) |>
+      dplyr::mutate(
+        month_total = sum(n, na.rm = TRUE),
+        percent     = dplyr::if_else(month_total > 0, n / month_total, 0)
+      ) |>
+      dplyr::ungroup()
+    
+    agg
+  })
+  
+  output$tod_facets <- renderPlot({
+    d <- tod_month_period_df()
+    validate(need(nrow(d) > 0, "No observations available for this selection."))
+    
+    # put n= in facet labels
+    facet_labs <- d |>
+      dplyr::distinct(month_fac, month_total) |>
+      dplyr::mutate(label = paste0(month_fac, " (n=", month_total, ")"))
+    lab_map <- stats::setNames(facet_labs$label, facet_labs$month_fac)
+    
+    ggplot(d, aes(x = "", y = percent, fill = day_period)) +
+      geom_col(width = 0.8, color = "white", size = 0.3) +
+      facet_wrap(~ month_fac, ncol = 4, labeller = ggplot2::labeller(month_fac = lab_map)) +
+      scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+      scale_fill_manual(
+        values = c(
+          Night = "#5B5B5B",   # dark gray
+          Dawn = "#FDB863",    # orange
+          Morning = "#80B1D3", # blue
+          Afternoon = "#8DD3C7", # teal
+          Dusk = "#B3CDE3"     # light blue
+        ),
+        drop = FALSE,
+        name = "Time of day"
+      ) +
+      labs(
+        title = "Time of day activity by month",
+        subtitle = paste0(
+          if (nzchar(input$species)) paste0("Species: ", input$species) else "All birds",
+          " — ",
+          if (input$county == "_ALL_") "All WNC" else paste0("County: ", input$county),
+          " — Month range ignored"
+        ),
+        x = NULL, y = "Share of monthly observations"
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(
+        axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "right",
+        strip.text = element_text(face = "bold")
+      )
+  })
+  
+  ###########################################
+  # REACTIVE --- CONTINGENCY TABLE --- 
 
   # REACTIVE 1
   # triggers with a species after apply, filters df for chosen common_name, selected month range, and county (optional)
@@ -425,25 +510,7 @@ server <- function(input, output, session){
     )
   })
   
-  ###########################################
- 
- 
- 
-  
-  
-  
-  
-  
-  
-  
-  ###########################################
-  #--- FACETED DENSITY PLOT ---
-  #Faceted density plot of time of day (by bird)
-  
-  
-  ########################################
+########################################
 }
-
-
 ###########################################
 shinyApp(ui, server)
