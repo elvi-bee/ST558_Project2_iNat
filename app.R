@@ -38,10 +38,10 @@ ui <- fluidPage(
                   selected = "_ALL_"),
       sliderInput("month_range", "Observation months:",
                   min = 1, max = 12, value = c(1, 12), step = 1),
-      sliderInput("min_obs", "Minimum observations (species must have at least):",
+      sliderInput("min_obs", "Minimum observations (species must have at least this many observations):",
                   min = 1, 
                   max = max(df$sum_sp, na.rm = TRUE), 
-                  value = 10, 
+                  value = 1, 
                   step = 1),
       numericInput("top_n", "Show top N species:", value = 15, min = 5, max = 50, step = 1),
       actionButton("apply", "Apply"),
@@ -62,8 +62,10 @@ ui <- fluidPage(
       plotOutput("year_species_box", height = 300),
       plotlyOutput("county_scatter"), #NEW
       plotOutput("bar", height = 450),
+      plotOutput("phenology", height = 320),
       DT::dataTableOutput("species_year_table"),
       leafletOutput("species_map", height =420)
+
     ) # main panel
   ) # side bar layout
 ) #fluid page
@@ -154,7 +156,7 @@ server <- function(input, output, session){
   })
   
   ###########################################
-  # REACTIVE: ---SUMMARY STATS--- by Year Per-Species Observation 2-way contingency table
+  # REACTIVE: ---SUMMARY STATS--- by Year Per-Species Observation contingency table
   
   # For each year, shows total number of unique species observed and the min/med/mean/max observations per species
   # add descriptive text later?? something like: how frequently observed species were within each year
@@ -257,6 +259,7 @@ server <- function(input, output, session){
       )
   })
   
+  # RENDER
   output$county_scatter <- renderPlotly({
     d <- scatter_base()
     validate(need(nrow(d) > 0, "No counties meet the current month selection."))
@@ -292,33 +295,61 @@ server <- function(input, output, session){
   })
 
   ###########################################
-  # REACTIVE --- 2-WAY CONTINGENCY TABLE --- 
-  #selected species (County × Year) keeping month and county filters
-  
-  species_year_county_data <- reactive({
-    #req(input$species) # must pick a species first
-    
-    d <- species_data()  # already filtered by species + month + (maybe) county
-    req(nrow(d) > 0)
+  #--- CIRCULAR PHENOLOGY ---
+  # Circular phenology plot to show by month observations for a bird
+  # can be all birds in WNC, all/species specific by county, or one species for all counties
+  # REACTIVE
+  phenology_df <- reactive({
+    d <- df # start with all bird observations
+    # county filter
+    if (input$county != "_ALL_") {
+      d <- d |>
+        dplyr::filter(NAME == input$county)
+    }
+    # selected species if chosen
+    if (nzchar(input$species)) {
+      d <- d |>
+        dplyr::filter(common_name == input$species)
+    }
     
     d |>
-      count(NAME, observed_year, name = "n_obs") |> # County × Year counts
-      dplyr::mutate(observed_year = as.integer(observed_year)) |>
-      tidyr::pivot_wider(
-        names_from  = observed_year, # Years become columns
-        values_from = n_obs,
-        values_fill = 0
-      ) |>
-      dplyr::rename(County = NAME) |>
-      dplyr::select(County, sort(tidyselect::peek_vars())) |>  # reorder columns numerically
-      dplyr::mutate(Total = rowSums(dplyr::across(where(is.numeric)), na.rm = TRUE)) |>
-      dplyr::arrange(dplyr::desc(Total))                 # optional: sort by total desc
+      dplyr::count(observed_month, name = "n") |>
+      dplyr::mutate(
+        month_lab = factor(month.abb[observed_month], levels = month.abb)
+      )
+
   })
   
-  # REACTIVE
-  species_data <- eventReactive({input$species; input$apply}, {
-    req(nzchar(input$species)) # run after a species is chosen
-    #req(input$species) # ensure a species is chosen / not empty
+  # RENDER
+  output$phenology <- renderPlot({
+    d <- phenology_df()
+    validate(need(sum(d$n) > 0, "No observations available for this selection."))
+    
+    ggplot(d, aes(x = month_lab, y = n)) +
+      geom_col(width = 1) +
+      coord_polar() +
+      labs(
+        title = if (nzchar(input$species))
+          paste0("Seasonality of Observations: ", input$species)
+        else
+          "Seasonality of Observations: All birds",
+        subtitle = if (input$county == "_ALL_") "All WNC" else paste("County:", input$county),
+        x = NULL, y = NULL
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(
+        panel.grid.minor = element_blank(),
+        axis.text.y = element_blank()
+      )
+  })
+  ###########################################
+  # REACTIVE --- 2-WAY CONTINGENCY TABLE --- 
+
+  # REACTIVE 1
+  # triggers with a species after apply, filters df for chosen common_name, selected month range, and county (optional)
+  species_data <- eventReactive({input$apply}, {
+    req(nzchar(input$species))
+
     d <- df |>
       dplyr::filter(
         common_name == input$species,
@@ -328,11 +359,33 @@ server <- function(input, output, session){
       d <- d |> dplyr::filter(NAME == input$county)
     }
     d |> dplyr::filter(!is.na(latitude), !is.na(longitude))
-  }, ignoreInit = TRUE)
+  }, ignoreInit = TRUE) # doesn't run on app start
+  
+  
+  # REACTIVE 2
+  # runs after REACTIVE 1 triggers, builds summary table with county and year total
+  species_year_county_data <- reactive({
+    # recalculates when species_data updates
+    d <- species_data()  # filtered by species,month, county
+    req(nrow(d) > 0)
+    
+    d |>
+      count(NAME, observed_year, name = "n_obs") |> # row per county, year counts
+      dplyr::mutate(observed_year = as.integer(observed_year)) |>
+      tidyr::pivot_wider(
+        names_from  = observed_year, # Years become columns
+        values_from = n_obs,
+        values_fill = 0
+      ) |>
+      dplyr::rename(County = NAME) |>
+      dplyr::select(County, sort(tidyselect::peek_vars())) |>  # reorder columns numerically
+      dplyr::mutate(Total = rowSums(dplyr::across(where(is.numeric)), na.rm = TRUE)) |> # total/county
+      dplyr::arrange(dplyr::desc(Total)) # sort by total desc
+  })
   
   # RENDER
   output$species_year_table <- DT::renderDataTable({
-    req(nzchar(input$species)) 
+    req(nzchar(input$species)) # species must be selected to run
     ct <- species_year_county_data()
     DT::datatable(
       ct,
@@ -357,13 +410,13 @@ server <- function(input, output, session){
     
     # base map
     m <- leaflet(d) |>
-      addProviderTiles(providers$CartoDB.Positron) |>
-      addHeatmap(
+      addProviderTiles(providers$CartoDB.Positron) |> # light gray Carto DB basemap
+      addHeatmap( 
         lng = ~longitude, lat = ~latitude,
         blur = 20, radius = 15, max = 1, minOpacity = 0.2
       )
     
-    # fit to data extent
+    # fit map to data extent
     m |> fitBounds(
       lng1 = min(d$longitude, na.rm = TRUE),
       lat1 = min(d$latitude,  na.rm = TRUE),
@@ -372,8 +425,20 @@ server <- function(input, output, session){
     )
   })
   
+  ###########################################
+ 
+ 
+ 
   
   
+  
+  
+  
+  
+  
+  ###########################################
+  #--- FACETED DENSITY PLOT ---
+  #Faceted density plot of time of day (by bird)
   
   
   ########################################
