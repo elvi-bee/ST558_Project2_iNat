@@ -28,12 +28,10 @@ species_choices <- sort(unique(df$common_name))
 ###############################################################################
 #UI
 ###############################################################################
-ui <- fluidPage(
-  titlePanel("iNaturalist Observations in Western North Carolina"),
-  sidebarLayout(
-    sidebarPanel(
-      
-      
+ui <- bslib::page_sidebar(
+  title = "iNaturalist Observations in Western North Carolina",
+  sidebar = bslib::sidebar(
+    
       selectInput("county", "County:", # change to selectizeInput?
                   choices = county_choices, 
                   selected = "_ALL_"),
@@ -45,20 +43,40 @@ ui <- fluidPage(
                   value = 1, 
                   step = 1),
       numericInput("top_n", "Show top N species:", value = 15, min = 5, max = 50, step = 1),
-      actionButton("apply", "Apply"),
-      
       selectizeInput(
         "species", "Species:",
         choices = c("", sort(unique(df$common_name))),  # alphabetized + blank default
         options = list(placeholder = "Start typing a bird name..."),
         multiple = FALSE
-      )
+      ),
+      actionButton("apply", "See Species Heat Map"),
       
     ), # sidebar panel
     ############################################################################
     ############################################################################
-    mainPanel(
+  navset_tab(
+    id = "tabs",
+    selected = "APP",
+    
+    # Overview tab
+    nav_panel(
+      "Overview",
+      h3("Overview"),
+      p("Summary to go here")
+    ),
+    
+    # Data tab
+    nav_panel(
+      "Data Download",
+      h3("Data Explorer"),
+      p("Put raw tables or data previews here if desired.")
+    ),
+    
+    # 3) APP tab: your entire previous mainPanel content
+    nav_panel(
+      "APP",
       DT::dataTableOutput("crosstab1yr"),
+      DT::dataTableOutput("year_quality_table"),
       DT::dataTableOutput("year_species_stats"),
       plotOutput("year_species_box", height = 300),
       plotlyOutput("county_scatter"),
@@ -66,18 +84,17 @@ ui <- fluidPage(
       plotOutput("phenology", height = 320),
       plotOutput("tod_facets", height = 420),
       DT::dataTableOutput("species_year_table"),
-      leafletOutput("species_map", height =420)
+      leafletOutput("species_map", height =420),
 
-    ) # main panel
-  ) # side bar layout
-) #fluid page
+    ))) # main panel
+   # side bar layout
+ #fluid page
 ###############################################################################
 # SERVER
 ###############################################################################
 server <- function(input, output, session){
   
-  # change to reactive later so something loads on start up?
-  filtered <- eventReactive( {input$apply; TRUE}, {
+  filtered <- reactive({
     # month filter
     d <- df |>
       filter(between(observed_month, input$month_range[1], input$month_range[2]))
@@ -101,12 +118,12 @@ server <- function(input, output, session){
         mutate(label = common_name)
     }
     d
-  }, ignoreInit = FALSE)
+  })
   
   ###########################################
   # RENDER ---BAR CHART ---top species
   output$bar <- renderPlot({
-    #req(input$apply > 0) # render card
+    
     d <- filtered()
     validate(need(nrow(d) > 0, "No species meet the current filters."))
     ggplot(d, aes(x = reorder(label, count), y = count)) +
@@ -125,7 +142,7 @@ server <- function(input, output, session){
   ###########################################
   # REACTIVE: ---1-WAY TABLE --- for observations by year
   
-  crosstab1yr_data <- eventReactive({input$apply; TRUE}, {
+  crosstab1yr_data <- reactive({
     d <- df |>
       filter(between(observed_month, input$month_range[1], input$month_range[2]))
     
@@ -138,11 +155,11 @@ server <- function(input, output, session){
         names_from = observed_year, 
         values_from = n_obs, 
         values_fill = 0)
-  }, ignoreInit = FALSE)
+  })
   
   # RENDER
   output$crosstab1yr <- DT::renderDataTable({
-    #req(input$apply > 0) # render card
+    
     ct <- crosstab1yr_data()
     validate(need(nrow(ct) > 0, "No observations for this selection."))
     DT::datatable(
@@ -150,9 +167,59 @@ server <- function(input, output, session){
       rownames = FALSE,
       options = list(
         ordering = FALSE,
-        searching = FALSE, # Remove column filter boxes
-        paging = FALSE,    # Turn off pagination entirely
+        searching = FALSE,
+        paging = FALSE,   
         info = FALSE 
+      )
+    )
+  })
+  
+  
+  ###########################################
+  # --- 2 WAY YR QUALITY_GRADE TABLE ---
+  # observations by year by quality grade
+  year_quality_data <- reactive({
+    grades <- c("research", "needs_id", "casual") 
+    
+    d <- df |>
+      dplyr::filter(dplyr::between(observed_month, input$month_range[1], input$month_range[2]))
+    
+    if (input$county != "_ALL_") {
+      d <- d |> dplyr::filter(NAME == input$county)
+    }
+    
+    d |>
+      dplyr::mutate(quality_grade = factor(quality_grade, levels = grades)) |>
+      dplyr::count(observed_year, quality_grade, name = "n") |>
+      tidyr::complete(
+        observed_year,
+        quality_grade = factor(grades, levels = grades),
+        fill = list(n = 0L)
+      ) |>
+      tidyr::pivot_wider(
+        names_from  = quality_grade,
+        values_from = n,
+        values_fill = 0
+      ) |>
+      dplyr::arrange(observed_year) |>
+      dplyr::mutate(
+        Total = rowSums(dplyr::across(tidyselect::any_of(grades)), na.rm = TRUE)
+      )
+  })
+  
+  output$year_quality_table <- DT::renderDataTable({
+    ct <- year_quality_data()
+    validate(need(nrow(ct) > 0, "No observations for this selection."))
+    
+    DT::datatable(
+      ct,
+      rownames = FALSE,
+      options = list(
+        dom = 't',
+        ordering = FALSE,
+        searching = FALSE,
+        paging = FALSE,
+        info = FALSE
       )
     )
   })
@@ -164,7 +231,7 @@ server <- function(input, output, session){
   # add descriptive text later?? something like: how frequently observed species were within each year
   # min - fewest obs any species had; med - middle species when sorted by count; 
   # mean - avg obs per species; max - most observed species
-  year_species_stats_data <- eventReactive({input$apply; TRUE}, {
+  year_species_stats_data <- reactive({
     d <- df |>
       dplyr::filter(dplyr::between(observed_month, input$month_range[1], input$month_range[2]))
     
@@ -190,7 +257,7 @@ server <- function(input, output, session){
         mean = round(mean, 2),
         sd   = round(sd, 2)
       )
-  }, ignoreInit = FALSE)
+  })
   
   # RENDER
   output$year_species_stats <- DT::renderDataTable({
@@ -211,7 +278,7 @@ server <- function(input, output, session){
   ###########################################
   #REACTIVE: ---BOX PLOT--- for per-species observation stats
   # one row per species × year with its observation count
-  per_species_year <- eventReactive({input$apply; TRUE}, {
+  per_species_year <- reactive({
     d <- df |>
       dplyr::filter(dplyr::between(observed_month, input$month_range[1], input$month_range[2]))
     
@@ -222,7 +289,7 @@ server <- function(input, output, session){
     d |>
       dplyr::count(observed_year, common_name, name = "n_species_obs") |>
       dplyr::arrange(observed_year)
-  }, ignoreInit = FALSE)
+  })
   
   # RENDER
   output$year_species_box <- renderPlot({
@@ -235,20 +302,40 @@ server <- function(input, output, session){
     )
     d$observed_year <- as.factor(d$observed_year)
     
-    ggplot(d, aes(x = factor(observed_year), y = n_species_obs)) +
-      geom_boxplot(outlier.alpha = 0.25) +
+    p <- ggplot(d, aes(x = factor(observed_year), y = n_species_obs)) +
+      geom_boxplot(outlier.alpha = 0.2) +
+      geom_jitter(width = 0.15, height = 0, alpha = 0.2, size = 1.6) +
       labs(
         x = "Year",
         y = "Observations per species",
         title = "Distribution of per-species observation counts by year"
       ) +
-      geom_jitter(width = 0.15, height = 0, alpha = 0.2) +
+      #geom_jitter(width = 0.15, height = 0, alpha = 0.2) +
       theme_minimal(base_size = 12)
+    
+    # add highlight for selected bird
+    if (nzchar(input$species) && any(d$common_name == input$species)) {
+      sel <- d %>% dplyr::filter(common_name == input$species)
+      
+      p <- p +
+        geom_point(
+          data = sel,
+          aes(x = observed_year, y = n_species_obs),
+          inherit.aes = FALSE,
+          size = 3.5,
+          shape = 21,           # filled circle with outline
+          fill  = "#E4572E",    # highlight fill
+          color = "black",      # thin outline so it pops on the box
+          stroke = 0.4,
+          alpha = 0.95
+        )
+    }
+    p
   })
   
   ###########################################
   # REACTIVE: --- SCATTER PLOT ---
-  # SCATTER PLOT — updates immediately when month_range changes
+  # SCATTER PLOT — updates when month_range changes
   
   scatter_base <- reactive({
     df |>
@@ -277,8 +364,8 @@ server <- function(input, output, session){
         "Unique species: ", unique_species
       )
     )) +
-      geom_point(aes(alpha = !highlight), size = 3) +
-      geom_point(data = subset(d, highlight), color = "blue", size = 4, stroke = 1.2) +
+      geom_point(aes(alpha = !highlight), color = "#5B5B5B", size = 2) +
+      geom_point(data = subset(d, highlight), color = "#8DD3C7", size = 4, stroke = 1.2) +
       labs(
         title = "County Species Richness vs Observation Effort",
         subtitle = paste0("Months: ", input$month_range[1], "–", input$month_range[2]),
@@ -362,7 +449,7 @@ server <- function(input, output, session){
                             ordered = TRUE)
       )
     
-    # aggregate to counts per (month × day_period), fill zeros, calculate % per month
+    # aggregate to counts per month × day_period, fill zeros, calculate % per month
     agg <- d |>
       dplyr::count(month_fac, day_period, name = "n") |>
       tidyr::complete(
@@ -491,6 +578,7 @@ server <- function(input, output, session){
   output$species_map <- renderLeaflet({
     req(nzchar(input$species)) 
     d <- species_data()
+    req(!is.null(d), nrow(d) > 0)
     validate(need(nrow(d) > 0, "Select a bird species to see distribution map."))
     
     # base map
@@ -509,8 +597,10 @@ server <- function(input, output, session){
       lat2 = max(d$latitude,  na.rm = TRUE)
     )
   })
-  
-########################################
+
+###########################################
+
+###########################################
 }
 ###########################################
 shinyApp(ui, server)
