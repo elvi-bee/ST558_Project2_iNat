@@ -32,24 +32,29 @@ ui <- bslib::page_sidebar(
   title = "iNaturalist Observations in Western North Carolina",
   sidebar = bslib::sidebar(
     
-      selectInput("county", "County:", # change to selectizeInput?
+    p("Make a selection below to see summaries."),  
+    selectInput("county", "Region/County:", # change to selectizeInput?
                   choices = county_choices, 
                   selected = "_ALL_"),
-      sliderInput("month_range", "Observation months:",
+      sliderInput("month_range", "Observation Months:",
                   min = 1, max = 12, value = c(1, 12), step = 1),
-      sliderInput("min_obs", "Minimum observations (species must have at least this many observations):",
+      sliderInput("min_obs", "Minimum Observations:",
                   min = 1, 
                   max = max(df$sum_sp, na.rm = TRUE), 
                   value = 1, 
                   step = 1),
       numericInput("top_n", "Show top N species:", value = 15, min = 5, max = 50, step = 1),
+      
+      tags$hr(),
+      p("Select a species to see county summary and species heatmap."),
       selectizeInput(
         "species", "Species:",
         choices = c("", sort(unique(df$common_name))),  # alphabetized + blank default
         options = list(placeholder = "Start typing a bird name..."),
         multiple = FALSE
       ),
-      actionButton("apply", "See Species Heat Map"),
+      actionButton("apply", "Apply Species Filter"),
+      actionButton("reset", "Reset to Defaults", icon = icon("refresh"))
       
     ), # sidebar panel
     ############################################################################
@@ -62,29 +67,58 @@ ui <- bslib::page_sidebar(
     nav_panel(
       "Overview",
       h3("Overview"),
-      p("Summary to go here")
+      p("Summary to go here...")
     ),
     
     # Data tab
     nav_panel(
       "Data Download",
-      h3("Data Explorer"),
-      p("Put raw tables or data previews here if desired.")
+      h3("Data Explorer..."),
+      p("")
     ),
     
     # 3) APP tab: your entire previous mainPanel content
     nav_panel(
       "APP",
+      tags$h4("Total Observations by Year"),
+      tags$p("Adjust Region/County and/or Observation Month to see total observations by year for selected filters."),
       DT::dataTableOutput("crosstab1yr"),
+      
+      tags$h4("Total Observations by Quality Grade and Year"),
+      tags$p("Adjust Region/County and/or Observation Month to see total observations by quality grade for selected filters."),
       DT::dataTableOutput("year_quality_table"),
+      
+      tags$h4("Per-Species Statistics"),
+      tags$p("Adjust Region/County and/or Observation Month to see per-species statistics for selected filters.This shows the number of species observed, as well as the minimum, mean, median, and maximum observed for a species by year."),      
       DT::dataTableOutput("year_species_stats"),
+      
+      tags$h4("Per-Species Statistics Box Plot"),
+      tags$p("Adjust Region/County and/or Observation Month to visually explore per-species statistics for selected filters. Optionally, also select a species from the Species dropdown to see where it falls in the distribution."),
       plotOutput("year_species_box", height = 300),
+      
+      tags$h4("County-Level Species Richness vs Observation Effort"),
+      tags$p("Select a Region/County and/or Observation Month to see where the county falls (for the selected time period) in terms of species richness and observation effort."),
       plotlyOutput("county_scatter"),
+      
+      tags$h4("Top Species"),
+      tags$p("Select a Region/County and Observation Month to see most frequently observed species for selected filters. Adjust 'Show top N species' to change number of species shown in chart."),
       plotOutput("bar", height = 450),
+      
+      tags$h4("Seasonality of Observations"),
+      tags$p("Adjust Region/County and Species to see observations by month."),
       plotOutput("phenology", height = 320),
+      
+      tags$h4("Time of Day of Observations"),
+      tags$p("Adjust Region/County and Species to see observations by time of day"),
       plotOutput("tod_facets", height = 420),
+      
+      tags$h4(""),
+      tags$p(""),
       DT::dataTableOutput("species_year_table"),
-      leafletOutput("species_map", height =420),
+      
+      tags$h4(""),
+      tags$p(""),
+      leafletOutput("species_map", height =420)
 
     ))) # main panel
    # side bar layout
@@ -227,10 +261,6 @@ server <- function(input, output, session){
   ###########################################
   # REACTIVE: ---SUMMARY STATS--- by Year Per-Species Observation contingency table
   
-  # For each year, shows total number of unique species observed and the min/med/mean/max observations per species
-  # add descriptive text later?? something like: how frequently observed species were within each year
-  # min - fewest obs any species had; med - middle species when sorted by count; 
-  # mean - avg obs per species; max - most observed species
   year_species_stats_data <- reactive({
     d <- df |>
       dplyr::filter(dplyr::between(observed_month, input$month_range[1], input$month_range[2]))
@@ -599,7 +629,18 @@ server <- function(input, output, session){
   })
 
 ###########################################
-
+  # --- REFRESH ---
+  # OBSERVE
+  observeEvent(input$reset, {
+    # reset all filters to defaults
+    updateSelectInput(session, "county", selected = "_ALL_")
+    updateSliderInput(session, "month_range", value = c(1, 12))
+    updateSliderInput(session, "min_obs", value = 1)
+    updateNumericInput(session, "top_n", value = 15)
+    updateSelectInput(session, "species", selected = "")
+    leafletProxy("species_map") %>% clearShapes() %>% clearControls() %>% clearMarkers()
+  })
+  
 ###########################################
 }
 ###########################################
