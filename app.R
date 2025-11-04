@@ -15,6 +15,7 @@ library(leaflet)
 library(leaflet.extras)
 library(plotly)
 library(lubridate)
+library(shinycssloaders)
 
 # load data
 df <- read_csv("data/inat_summary.csv", show_col_types = FALSE)
@@ -33,7 +34,7 @@ ui <- bslib::page_sidebar(
   sidebar = bslib::sidebar(
     
     p("Make a selection below to see summaries."),  
-    selectInput("county", "Region/County:", # change to selectizeInput?
+    selectInput("county", "Region/County:",
                   choices = county_choices, 
                   selected = "_ALL_"),
       sliderInput("month_range", "Observation Months:",
@@ -49,7 +50,7 @@ ui <- bslib::page_sidebar(
       p("Select a species to see county summary and species heatmap."),
       selectizeInput(
         "species", "Species:",
-        choices = c("", sort(unique(df$common_name))),  # alphabetized + blank default
+        choices = c("", sort(unique(df$common_name))),
         options = list(placeholder = "Start typing a bird name..."),
         multiple = FALSE
       ),
@@ -61,68 +62,97 @@ ui <- bslib::page_sidebar(
     ############################################################################
   navset_tab(
     id = "tabs",
-    selected = "APP",
+    selected = "About",
     
     # Overview tab
     nav_panel(
-      "Overview",
-      h3("Overview"),
-      p("Summary to go here...")
+      
+      "About",
+      h3("About this App"),
+      p("This Shiny web application is a tool for exploring iNaturalist data. 
+      The app focuses on bird observations (Aves) recorded 
+        through the iNaturalist platform between 2020 and 2025 across counties 
+        in Western North Carolina (WNC). It enables users to visualize quantitative, 
+        spatial, temporal, and taxonomic patterns in the data and examine how 
+        observation effort and data quality vary over time."),
+      
+      p("This app contains three tabs:"),
+      p("1. About Tab: Includes information about this App and iNaturalist."),
+      p("2. Data Download Tab: You may download a subset of the data used in this App."),
+      p("3. Data Exploration Tab: The main App where you can explore the data."),
+      p("The side bar: Contains various filters you can use to subset and visualize the data on 
+      the Data Exploration tab, as well as to subset data on the Data Download tab."),
+      p("How to use this App: Start by navigating to the Data Exploration tab. The app 
+        loads with data for all of Western North Carolina (WNC) and all observations months (Jan - Dec).
+        You can start by adjusting the filters for Region/County and Observation Months 
+        and see how the visuals change. You can then also scroll down on the left side bar, 
+        and select a species, to see additional visuals that are species-specific, including 
+        a heat map of the distribution of observations for your chosen species."),
+      p("More about the data: iNaturalist data consist of data points or observations submitted 
+      through the iNaturalist App by registered users. Each observation or data 
+      points contains variables like the time, date, and coordinates of the 
+      observation, as well quality grade and species details.
+      Learn more  about iNaturalist at their website: "),
+      tags$a(href = "https://www.inaturalist.org/", "iNaturalist", target = "_blank"),
+      tags$img(src = "INaturalist_logo.png", width = "100px", alt = "Description of the image"),
     ),
     
-    # Data tab
+    # Data Download Tab
     nav_panel(
       "Data Download",
-      h3("Data Explorer..."),
-      p("")
+      h3("Data Download"),
+      p("Use the filters to preview and download a subset of the iNaturalist data."),
+      
+      DT::dataTableOutput("download_table"),
+      br(),
+      downloadButton("download_subset", "Download Filtered Data")
     ),
     
-    # 3) APP tab: your entire previous mainPanel content
+    # 3) APP tab
     nav_panel(
-      "APP",
+      "Data Exploration",
       tags$h4("Total Observations by Year"),
       tags$p("Adjust Region/County and/or Observation Month to see total observations by year for selected filters."),
-      DT::dataTableOutput("crosstab1yr"),
+      withSpinner(DT::dataTableOutput("crosstab1yr")),
       
       tags$h4("Total Observations by Quality Grade and Year"),
       tags$p("Adjust Region/County and/or Observation Month to see total observations by quality grade for selected filters."),
-      DT::dataTableOutput("year_quality_table"),
+      withSpinner(DT::dataTableOutput("year_quality_table")),
       
       tags$h4("Per-Species Statistics"),
       tags$p("Adjust Region/County and/or Observation Month to see per-species statistics for selected filters.This shows the number of species observed, as well as the minimum, mean, median, and maximum observed for a species by year."),      
-      DT::dataTableOutput("year_species_stats"),
+      withSpinner(DT::dataTableOutput("year_species_stats")),
       
       tags$h4("Per-Species Statistics Box Plot"),
       tags$p("Adjust Region/County and/or Observation Month to visually explore per-species statistics for selected filters. Optionally, also select a species from the Species dropdown to see where it falls in the distribution."),
-      plotOutput("year_species_box", height = 300),
+      withSpinner(plotOutput("year_species_box", height = 300)),
       
       tags$h4("County-Level Species Richness vs Observation Effort"),
       tags$p("Select a Region/County and/or Observation Month to see where the county falls (for the selected time period) in terms of species richness and observation effort."),
-      plotlyOutput("county_scatter"),
+      withSpinner(plotlyOutput("county_scatter")),
       
       tags$h4("Top Species"),
       tags$p("Select a Region/County and Observation Month to see most frequently observed species for selected filters. Adjust 'Show top N species' to change number of species shown in chart."),
-      plotOutput("bar", height = 450),
+      withSpinner(plotOutput("bar", height = 450)),
       
       tags$h4("Seasonality of Observations"),
       tags$p("Adjust Region/County and Species to see observations by month."),
-      plotOutput("phenology", height = 320),
+      withSpinner(plotOutput("phenology", height = 320)),
       
       tags$h4("Time of Day of Observations"),
       tags$p("Adjust Region/County and Species to see observations by time of day"),
-      plotOutput("tod_facets", height = 420),
+      withSpinner(plotOutput("tod_facets", height = 420)),
       
       tags$h4(""),
       tags$p(""),
-      DT::dataTableOutput("species_year_table"),
+      withSpinner(DT::dataTableOutput("species_year_table")),
       
-      tags$h4(""),
-      tags$p(""),
-      leafletOutput("species_map", height =420)
+      tags$h4(textOutput("map_title")),
+      tags$p(textOutput("map_subtitle"), style = "font-size: 14px; color: #555; margin-top: -10px;"),
+      withSpinner(leafletOutput("species_map", height =420))
 
-    ))) # main panel
-   # side bar layout
- #fluid page
+    )))
+   
 ###############################################################################
 # SERVER
 ###############################################################################
@@ -165,9 +195,9 @@ server <- function(input, output, session){
       coord_flip() +
       labs(
         title = if (input$county == "_ALL_")
-          "Top Species in Western NC, 2020 - 2025"
+          "Western NC, 2020 - 2025"
         else
-          paste("Top Species in", input$county,"County, 2020 - 2025"),
+          paste(input$county,"County, 2020 - 2025"),
         x = "Species (common name)", y = "Number of observations"
       ) +
       theme_minimal(base_size = 12)
@@ -323,10 +353,8 @@ server <- function(input, output, session){
   
   # RENDER
   output$year_species_box <- renderPlot({
-    #req(input$apply > 0)
     d <- per_species_year()
     validate(need(nrow(d) > 0, "No observations for this selection."),
-             # validate(need(nrow(ct) > 0, "No observations for this selection."))
              need(all(c("observed_year", "n_species_obs") %in% names(d)),
                   paste("Missing required columns for boxplot. Got:", paste(names(d), collapse=", ")))
     )
@@ -337,10 +365,9 @@ server <- function(input, output, session){
       geom_jitter(width = 0.15, height = 0, alpha = 0.2, size = 1.6) +
       labs(
         x = "Year",
-        y = "Observations per species",
-        title = "Distribution of per-species observation counts by year"
+        y = "Observations per species"
+        #title = "Distribution of per-species observation counts by year"
       ) +
-      #geom_jitter(width = 0.15, height = 0, alpha = 0.2) +
       theme_minimal(base_size = 12)
     
     # add highlight for selected bird
@@ -353,9 +380,9 @@ server <- function(input, output, session){
           aes(x = observed_year, y = n_species_obs),
           inherit.aes = FALSE,
           size = 3.5,
-          shape = 21,           # filled circle with outline
-          fill  = "#E4572E",    # highlight fill
-          color = "black",      # thin outline so it pops on the box
+          shape = 21, # filled circle with outline
+          fill  = "#FDB863", # highlight fill
+          color = "black", # thin outline so it pops on the box
           stroke = 0.4,
           alpha = 0.95
         )
@@ -395,9 +422,9 @@ server <- function(input, output, session){
       )
     )) +
       geom_point(aes(alpha = !highlight), color = "#5B5B5B", size = 2) +
-      geom_point(data = subset(d, highlight), color = "#8DD3C7", size = 4, stroke = 1.2) +
+      geom_point(data = subset(d, highlight), color = "#FDB863", size = 4, stroke = 1.2) +
       labs(
-        title = "County Species Richness vs Observation Effort",
+        #title = "County Species Richness vs Observation Effort",
         subtitle = paste0("Months: ", input$month_range[1], "–", input$month_range[2]),
         x = "Total Observations",
         y = "Number of Unique Species"
@@ -416,7 +443,6 @@ server <- function(input, output, session){
   ###########################################
   #--- CIRCULAR PHENOLOGY ---
   # Circular phenology plot to show by month observations for a bird
-  # can be all birds in WNC, all/species specific by county, or one species for all counties
   # REACTIVE
   phenology_df <- reactive({
     d <- df # start with all bird observations
@@ -448,11 +474,12 @@ server <- function(input, output, session){
       geom_col(width = 1) +
       coord_polar() +
       labs(
-        title = if (nzchar(input$species))
-          paste0("Seasonality of Observations: ", input$species)
-        else
-          "Seasonality of Observations: All birds",
-        subtitle = if (input$county == "_ALL_") "All WNC" else paste("County:", input$county),
+        title = paste0(
+          if (nzchar(input$species)) paste0("Species: ", input$species) else "All birds",
+          " - ",
+          if (input$county == "_ALL_") "All WNC" else paste("County:", input$county),
+          " (Month range ignored)"
+        ),
         x = NULL, y = NULL
       ) +
       theme_minimal(base_size = 12) +
@@ -460,6 +487,7 @@ server <- function(input, output, session){
         panel.grid.minor = element_blank(),
         axis.text.y = element_blank()
       )
+      
   })
   
   ###########################################
@@ -525,8 +553,7 @@ server <- function(input, output, session){
         name = "Time of day"
       ) +
       labs(
-        title = "Time of day activity by month",
-        subtitle = paste0(
+        title = paste0(
           if (nzchar(input$species)) paste0("Species: ", input$species) else "All birds",
           " — ",
           if (input$county == "_ALL_") "All WNC" else paste0("County: ", input$county),
@@ -605,6 +632,21 @@ server <- function(input, output, session){
   ###########################################
   #--- MAP ---
   # RENDER
+  output$map_title <- renderText({
+    if (nzchar(input$species)) {
+      paste(input$species, "Distribution Map")
+    } else {
+      "Select species to see map."
+    }
+  })
+  
+  output$map_subtitle <- renderText({
+    if (nzchar(input$species)) {
+      if (input$county == "_ALL_") "All WNC"
+      else paste("Observations within", input$county, "County")
+    } else ""
+  })
+  
   output$species_map <- renderLeaflet({
     req(nzchar(input$species)) 
     d <- species_data()
@@ -629,7 +671,7 @@ server <- function(input, output, session){
   })
 
 ###########################################
-  # --- REFRESH ---
+  # --- REFRESH ACTIONS ---
   # OBSERVE
   observeEvent(input$reset, {
     # reset all filters to defaults
@@ -642,6 +684,56 @@ server <- function(input, output, session){
   })
   
 ###########################################
+  # --- DATA DOWNLOAD ---
+
+  # REACTIVE
+  download_data <- reactive({
+    d <- df
+    
+    # County filter (All WNC vs specific county)
+    if (input$county != "_ALL_") {
+      d <- d |> dplyr::filter(NAME == input$county)
+    }
+    
+    # month range filter
+    d <- d |>
+      dplyr::filter(
+        dplyr::between(observed_month, input$month_range[1], input$month_range[2])
+      )
+    
+    # Optional species filter - only if user selects
+    if (nzchar(input$species)) {
+      d <- d |> dplyr::filter(common_name == input$species)
+    }
+    
+    d
+  })
+  
+  # RENDER
+  output$download_table <- DT::renderDataTable({
+    d <- download_data()
+    validate(need(nrow(d) > 0, "No observations for this selection."))
+    
+    DT::datatable(
+      d,
+      options = list(
+        pageLength = 20,
+        scrollX    = TRUE
+      )
+    )
+  })
+  
+  output$download_subset <- downloadHandler(
+    filename = function() {
+      paste0("inat_subset_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      readr::write_csv(download_data(), file)
+    }
+  )
+  ###########################################
+  
+  
 }
 ###########################################
 shinyApp(ui, server)
